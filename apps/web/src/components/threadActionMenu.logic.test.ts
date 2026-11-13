@@ -74,4 +74,23 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("keeps folder actions available without operate permission", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      customFolders: [
+        { id: "cf_bugs", name: "Bugs", containsThread: true },
+        { id: "cf_later", name: "Later", containsThread: false },
+      ],
+    });
+    const folder = items.find((item) => item.id === "folder");
+    expect(folder?.disabled).toBeFalsy();
+    expect(folder?.children?.map((child) => [child.id, child.checked, child.disabled])).toEqual([
+      ["folder:new", undefined, undefined],
+      ["folder:cf_bugs", true, undefined],
+      ["folder:cf_later", false, undefined],
+      ["folder:remove", undefined, undefined],
+    ]);
+  });
 });

@@ -492,6 +492,17 @@ export function SortableThreadRow(
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
 }
+
+export function StaticThreadRow(props: Omit<SidebarThreadRowProps, "sortable">) {
+  const liveThread = useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id));
+  const thread =
+    liveThread === null
+      ? props.thread
+      : props.thread.runtime !== null
+        ? asLaunchingThread(liveThread)
+        : liveThread;
+  return <SidebarThreadRow key={props.variant} {...props} thread={thread} />;
+}
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   pin: (

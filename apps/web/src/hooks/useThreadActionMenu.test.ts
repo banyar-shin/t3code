@@ -89,10 +89,24 @@ vi.mock("../sidebarProjectGrouping", () => ({
   buildPhysicalToLogicalProjectKeyMap: () => new Map(),
 }));
 vi.mock("../uiStateStore", () => ({
-  useUiStateStore: (select: (store: unknown) => unknown) =>
-    select({
-      markThreadUnread: () => recordEffect("mark-unread"),
-    }),
+  useUiStateStore: Object.assign(
+    (select: (store: unknown) => unknown) =>
+      select({
+        markThreadUnread: () => recordEffect("mark-unread"),
+      }),
+    {
+      getState: () => ({
+        customFolders: [] as ReadonlyArray<{
+          id: string;
+          name: string;
+          threadKeys: readonly string[];
+        }>,
+        createCustomFolder: () => recordEffect("create-folder"),
+        removeThreadFromCustomFolders: () => recordEffect("remove-folder"),
+        moveThreadToCustomFolder: () => recordEffect("move-folder"),
+      }),
+    },
+  ),
 }));
 vi.mock("../components/ui/toast", () => ({
   stackedThreadToast: (toast: unknown) => toast,
@@ -179,6 +193,13 @@ describe("thread menu permissions", () => {
       expect(state.effects).toEqual([]);
     },
   );
+
+  it("files a thread from the menu without task permission", async () => {
+    state.show.mockResolvedValue("folder:new");
+    createMenu().openMenu(position);
+    await state.completed.promise;
+    expect(state.effects).toEqual(["create-folder"]);
+  });
 
   it("offers find only to a header that can open it, without task permission", async () => {
     createMenu().openMenu(position);

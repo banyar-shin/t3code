@@ -9,6 +9,10 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "folder"
+  | "folder:new"
+  | "folder:remove"
+  | `folder:${string}`
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -95,10 +99,17 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Local display folders. Absent means the caller has none. */
+  readonly customFolders?: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly containsThread: boolean;
+  }>;
 }
 
-/** Local navigation, read markers, and copying remain available to read-only clients. */
+/** Local navigation, read markers, copying, and display folders remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  if (action === "folder" || action.startsWith("folder:")) return false;
   return ![
     "find",
     "new-thread-on-branch",
@@ -136,6 +147,28 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
         ]
       : []),
+    {
+      id: "folder",
+      label: "Folder",
+      icon: "folder",
+      children: [
+        { id: "folder:new", label: "New folder", icon: "folder-plus" },
+        ...(state.customFolders ?? []).map((folder) => ({
+          id: `folder:${folder.id}` as const,
+          label: folder.name,
+          checked: folder.containsThread,
+        })),
+        ...((state.customFolders ?? []).some((folder) => folder.containsThread)
+          ? [
+              {
+                id: "folder:remove" as const,
+                label: "Remove from folder",
+                separatorBefore: true,
+              },
+            ]
+          : []),
+      ],
+    },
     ...(state.supports.settlement
       ? [
           state.isSettled

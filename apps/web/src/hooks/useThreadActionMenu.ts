@@ -1,4 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
@@ -35,6 +35,7 @@ import {
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
+import { useUiStateStore } from "../uiStateStore";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -152,6 +153,11 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        customFolders: useUiStateStore.getState().customFolders.map((folder) => ({
+          id: folder.id,
+          name: folder.name,
+          containsThread: folder.threadKeys.includes(scopedThreadKey(threadRef)),
+        })),
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -164,6 +170,14 @@ export function useThreadActionMenu(input: {
           "Thread action unavailable",
           new Error("This connection cannot change threads."),
         );
+        return;
+      }
+      if (action.startsWith("folder:")) {
+        const store = useUiStateStore.getState();
+        const threadKey = scopedThreadKey(threadRef);
+        if (action === "folder:new") store.createCustomFolder(threadKey);
+        else if (action === "folder:remove") store.removeThreadFromCustomFolders(threadKey);
+        else store.moveThreadToCustomFolder(threadKey, action.slice("folder:".length));
         return;
       }
       if (action.startsWith("snooze:")) {

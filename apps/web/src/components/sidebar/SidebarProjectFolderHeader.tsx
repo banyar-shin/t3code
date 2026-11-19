@@ -1,9 +1,12 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, FolderIcon, SquarePenIcon } from "lucide-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarCustomFolder } from "../../sidebarCustomFolders";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
@@ -20,10 +23,10 @@ const FOLDER_DOT_CLASS_NAME = {
 } as const;
 
 const FOLDER_DOT_LABEL = {
-  attention: ", needs you",
-  failed: ", failed",
-  unread: ", done",
-  working: ", working",
+  attention: msg(", needs you", { $context: "project folder status, read after its name" }),
+  failed: msg(", failed", { $context: "project folder status, read after its name" }),
+  unread: msg(", done", { $context: "project folder status, read after its name" }),
+  working: msg(", working", { $context: "project folder status, read after its name" }),
 } as const;
 
 /** The folder's sidebar tree row; its thread rows name it as their parent. */
@@ -41,6 +44,7 @@ function FolderRenameInput(props: {
   onCommit: () => void;
   onCancel: () => void;
 }) {
+  const gt = useGT();
   const settledRef = useRef(false);
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     event.stopPropagation();
@@ -60,7 +64,7 @@ function FolderRenameInput(props: {
       autoFocus
       value={props.name}
       dir="auto"
-      aria-label="Folder name"
+      aria-label={gt("Folder name")}
       onChange={(event) => props.onNameChange(event.target.value)}
       onFocus={(event) => event.currentTarget.select()}
       onKeyDown={handleKeyDown}
@@ -82,8 +86,9 @@ function SidebarFolderHeader(props: {
   icon: ReactNode;
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: () => void;
-  onContextMenu: (position: { x: number; y: number }) => void;
+  onContextMenu: (position: { x: number; y: number }, source: ContextMenuSource) => void;
   newThreadLabel?: string | undefined;
+  newThreadPopup?: ReactNode | undefined;
   onNewThread?: (() => void) | undefined;
   rename?:
     | {
@@ -94,6 +99,7 @@ function SidebarFolderHeader(props: {
       }
     | undefined;
 }) {
+  const m = useMessages();
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = props.collapsed
     ? resolveSidebarFolderDot(
@@ -114,7 +120,7 @@ function SidebarFolderHeader(props: {
     <>
       {dot ? (
         <span className={cn("size-1.5 shrink-0 rounded-full", FOLDER_DOT_CLASS_NAME[dot])}>
-          <span className="sr-only">{FOLDER_DOT_LABEL[dot]}</span>
+          <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>
         </span>
       ) : null}
       {props.collapsed && props.hiddenThreads.length > 0 ? (
@@ -166,7 +172,7 @@ function SidebarFolderHeader(props: {
           onClick={props.onToggle}
           onContextMenu={(event) => {
             event.preventDefault();
-            props.onContextMenu({ x: event.clientX, y: event.clientY });
+            props.onContextMenu({ x: event.clientX, y: event.clientY }, contextMenuSourceOf(event));
           }}
           className={rowClassName}
         >
@@ -194,7 +200,7 @@ function SidebarFolderHeader(props: {
             >
               <SquarePenIcon aria-hidden />
             </TooltipTrigger>
-            <TooltipPopup>{props.newThreadLabel}</TooltipPopup>
+            <TooltipPopup>{props.newThreadPopup ?? props.newThreadLabel}</TooltipPopup>
           </Tooltip>
         </span>
       ) : null}
@@ -213,8 +219,13 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
-  onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    group: SidebarProjectSnapshot,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
 }) {
+  const gt = useGT();
   const { group, collapsed, hiddenThreads } = props;
   return (
     <SidebarFolderHeader
@@ -225,8 +236,13 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
       hiddenThreads={hiddenThreads}
       onToggle={() => props.onToggle(group)}
-      onContextMenu={(position) => props.onContextMenu(group, position)}
-      newThreadLabel={`New thread in ${group.displayName}`}
+      onContextMenu={(position, source) => props.onContextMenu(group, position, source)}
+      newThreadLabel={gt("New thread in {project}", { project: group.displayName })}
+      newThreadPopup={
+        <T>
+          New thread in <Var>{group.displayName}</Var>
+        </T>
+      }
       onNewThread={() => props.onNewThread(group)}
     />
   );
@@ -237,7 +253,11 @@ export const SidebarCustomFolderHeader = memo(function SidebarCustomFolderHeader
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (folderId: string) => void;
-  onContextMenu: (folderId: string, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    folderId: string,
+    position: { x: number; y: number },
+    source: ContextMenuSource,
+  ) => void;
 }) {
   const editingName = useUiStateStore((state) =>
     state.editingCustomFolderId === props.folder.id ? state.editingCustomFolderName : null,
@@ -251,7 +271,7 @@ export const SidebarCustomFolderHeader = memo(function SidebarCustomFolderHeader
       icon={<FolderIcon aria-hidden className="size-4 shrink-0" />}
       hiddenThreads={props.hiddenThreads}
       onToggle={() => props.onToggle(props.folder.id)}
-      onContextMenu={(position) => props.onContextMenu(props.folder.id, position)}
+      onContextMenu={(position, source) => props.onContextMenu(props.folder.id, position, source)}
       rename={
         editingName === null
           ? undefined

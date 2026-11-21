@@ -4,11 +4,13 @@ import {
   claimCustomFolderMembers,
   createCustomFolder,
   customFolderDisplayKeys,
+  customFolderDropBeforeId,
   deleteCustomFolder,
   moveThreadToCustomFolder,
   nextCustomFolderName,
   removeThreadFromCustomFolders,
   renameCustomFolder,
+  reorderCustomFolders,
   sanitizeCustomFolders,
   setCustomFolderCollapsed,
   type SidebarCustomFolder,
@@ -82,6 +84,40 @@ describe("custom sidebar folders", () => {
     ]);
     expect(deleteCustomFolder(moved, "missing")).toBe(moved);
     expect(createCustomFolder(moved, "env:c", "new")).toBe(moved);
+  });
+
+  it("reorders folders and leaves a same-position drag untouched", () => {
+    const folders = [
+      folder("cf_a", "A", ["env:a"]),
+      folder("cf_b", "B", ["env:b"], true),
+      folder("cf_c", "C", []),
+    ];
+    const ids = folders.map((entry) => entry.id);
+    expect(reorderCustomFolders(folders, "cf_c", "cf_a")).toEqual([
+      folder("cf_c", "C", []),
+      folder("cf_a", "A", ["env:a"]),
+      folder("cf_b", "B", ["env:b"], true),
+    ]);
+    expect(reorderCustomFolders(folders, "cf_a", null)).toEqual([
+      folder("cf_b", "B", ["env:b"], true),
+      folder("cf_c", "C", []),
+      folder("cf_a", "A", ["env:a"]),
+    ]);
+    expect(reorderCustomFolders(folders, "cf_a", "cf_b")).toBe(folders);
+    expect(reorderCustomFolders(folders, "cf_c", null)).toBe(folders);
+    expect(reorderCustomFolders(folders, "cf_b", "cf_b")).toBe(folders);
+    expect(reorderCustomFolders(folders, "missing", null)).toBe(folders);
+    expect(reorderCustomFolders(folders, "cf_a", "missing")).toBe(folders);
+    expect(customFolderDropBeforeId(ids, "cf_a", "cf_b")).toBe("cf_c");
+    expect(reorderCustomFolders(folders, "cf_a", "cf_c")).toEqual([
+      folder("cf_b", "B", ["env:b"], true),
+      folder("cf_a", "A", ["env:a"]),
+      folder("cf_c", "C", []),
+    ]);
+    expect(customFolderDropBeforeId(ids, "cf_a", "cf_c")).toBeNull();
+    expect(customFolderDropBeforeId(ids, "cf_c", "cf_a")).toBe("cf_a");
+    expect(customFolderDropBeforeId(ids, "cf_b", "cf_b")).toBeUndefined();
+    expect(customFolderDropBeforeId(ids, "cf_a", "missing")).toBeUndefined();
   });
 
   it("shows only the open thread while a folder is collapsed", () => {

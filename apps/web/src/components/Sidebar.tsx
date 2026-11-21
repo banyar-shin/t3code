@@ -16,16 +16,18 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
+  closestCenter,
   DndContext,
   useSensor,
   useSensors,
   type AutoScrollOptions,
+  type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext } from "@dnd-kit/sortable";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
@@ -119,7 +121,11 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { claimCustomFolderMembers, customFolderDisplayKeys } from "../sidebarCustomFolders";
+import {
+  claimCustomFolderMembers,
+  customFolderDisplayKeys,
+  customFolderDropBeforeId,
+} from "../sidebarCustomFolders";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -278,6 +284,7 @@ import { SidebarDraftBlock, useSidebarDrafts } from "./sidebar/SidebarDraftBlock
 import {
   SidebarCustomFolderHeader,
   SidebarProjectFolderHeader,
+  customFolderIdFromRowId,
   customFolderRowId,
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
@@ -1122,6 +1129,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } | null>(null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
+  const draggingCustomFolderRef = useRef(false);
   const dragScrollRef = useRef<{ readonly viewport: Element; readonly top: number } | null>(null);
   const [actionSweep, setActionSweep] = useState<{
     action: SidebarSweepAction;
@@ -1870,6 +1878,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
+    if (draggingCustomFolderRef.current) return false;
     // Search results cannot reorder, so their context preview starts inside the list.
     const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
     setDragState((current) =>
@@ -1889,6 +1898,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return true;
   };
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
+    if (draggingCustomFolderRef.current) return false;
     if (!pointerOutsideThreadList(point)) return false;
     restoreDragScroll();
     dropThreadContext(point, contextDragThreads());
@@ -2012,6 +2022,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const handleThreadDragStart = (event: DragStartEvent) => {
     const activeKey = String(event.active.id);
+    if (customFolderIdFromRowId(activeKey) !== null) {
+      draggingCustomFolderRef.current = true;
+      contextDragKeyRef.current = null;
+      dragLabelOffsetRef.current = 0;
+      listMotionRef.current?.suspend();
+      return;
+    }
+    draggingCustomFolderRef.current = false;
     contextDragKeyRef.current = activeKey;
     const activeSection = sectionByThreadKey.get(activeKey);
     if (activeSection === undefined) return;
@@ -2201,9 +2219,49 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       },
     );
   })();
+  const sidebarCollisionDetection: CollisionDetection = (args) => {
+    const folderDrag = customFolderIdFromRowId(String(args.active.id)) !== null;
+    return (folderDrag ? closestCenter : dndCollisionDetection)({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (container) => (customFolderIdFromRowId(String(container.id)) !== null) === folderDrag,
+      ),
+    });
+  };
+  const resetCustomFolderDragMotion = () => {
+    listMotionRef.current?.suspend();
+    listMotionRef.current?.update(false);
+  };
+  const handleCustomFolderDragCancel = () => {
+    if (!draggingCustomFolderRef.current) return;
+    draggingCustomFolderRef.current = false;
+    resetCustomFolderDragMotion();
+  };
   const handleThreadDragEnd = (event: DragEndEvent) => {
-    if (projectFolders !== null) return;
     const activeKey = String(event.active.id);
+    const draggedFolderId = customFolderIdFromRowId(activeKey);
+    if (draggedFolderId !== null) {
+      const started = draggingCustomFolderRef.current;
+      draggingCustomFolderRef.current = false;
+      if (!started) return;
+      const overFolderId =
+        event.over === null ? null : customFolderIdFromRowId(String(event.over.id));
+      const beforeId =
+        overFolderId === null
+          ? undefined
+          : customFolderDropBeforeId(
+              useUiStateStore.getState().customFolders.map((folder) => folder.id),
+              draggedFolderId,
+              overFolderId,
+            );
+      if (beforeId === undefined) {
+        resetCustomFolderDragMotion();
+        return;
+      }
+      useUiStateStore.getState().reorderCustomFolders(draggedFolderId, beforeId);
+      return;
+    }
+    if (projectFolders !== null) return;
     const activeSection = sectionByThreadKey.get(activeKey);
     const target =
       event.over === null
@@ -3522,10 +3580,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               <DndContext
                 sensors={dndSensors}
                 autoScroll={isContextDrag ? false : SIDEBAR_AUTO_SCROLL}
-                collisionDetection={dndCollisionDetection}
+                collisionDetection={sidebarCollisionDetection}
                 modifiers={dndModifiers}
                 onDragStart={handleThreadDragStart}
                 onDragOver={handleThreadDragOver}
+                onDragCancel={handleCustomFolderDragCancel}
                 onDragEnd={handleThreadDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
@@ -3667,27 +3726,44 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
-                      for (const folder of customFolderViews) {
+                      if (customFolderViews.length > 0) {
                         items.push(
-                          <SidebarCustomFolderHeader
-                            key={`custom-folder:${folder.folder.id}`}
-                            folder={folder.folder}
-                            collapsed={folder.collapsed}
-                            hiddenThreads={folder.hiddenThreads}
-                            onToggle={(folderId) =>
-                              useUiStateStore
-                                .getState()
-                                .setCustomFolderCollapsed(folderId, !folder.collapsed)
-                            }
-                            onContextMenu={handleCustomFolderContextMenu}
-                          />,
+                          <SortableContext
+                            key="sidebar-custom-folders"
+                            items={customFolderViews.map((folder) =>
+                              customFolderRowId(folder.folder.id),
+                            )}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            {customFolderViews.map((folder) => {
+                              const rowId = customFolderRowId(folder.folder.id);
+                              const threadRows: ReactNode[] = [];
+                              for (const thread of folder.threads) {
+                                const section = folder.sectionByThreadKey.get(
+                                  threadShellKey(thread),
+                                );
+                                if (section === undefined) continue;
+                                threadRows.push(renderThreadRow(thread, section, rowId, false));
+                              }
+                              return (
+                                <SidebarCustomFolderHeader
+                                  key={`custom-folder:${folder.folder.id}`}
+                                  folder={folder.folder}
+                                  collapsed={folder.collapsed}
+                                  hiddenThreads={folder.hiddenThreads}
+                                  onToggle={(folderId) =>
+                                    useUiStateStore
+                                      .getState()
+                                      .setCustomFolderCollapsed(folderId, !folder.collapsed)
+                                  }
+                                  onContextMenu={handleCustomFolderContextMenu}
+                                >
+                                  {threadRows.length > 0 ? threadRows : undefined}
+                                </SidebarCustomFolderHeader>
+                              );
+                            })}
+                          </SortableContext>,
                         );
-                        const rowId = customFolderRowId(folder.folder.id);
-                        for (const thread of folder.threads) {
-                          const section = folder.sectionByThreadKey.get(threadShellKey(thread));
-                          if (section === undefined) continue;
-                          items.push(renderThreadRow(thread, section, rowId, false));
-                        }
                       }
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {

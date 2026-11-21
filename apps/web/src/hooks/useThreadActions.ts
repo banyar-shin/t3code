@@ -368,6 +368,9 @@ export function useThreadActions() {
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
+  const removeThreadFromCustomFolders = useUiStateStore(
+    (state) => state.removeThreadFromCustomFolders,
+  );
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
 
@@ -867,6 +870,7 @@ export function useThreadActions() {
       action.finish();
       return result;
     }
+    removeThreadFromCustomFolders(scopedThreadKey(target));
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(target), wokeAt);
     }

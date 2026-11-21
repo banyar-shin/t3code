@@ -1,7 +1,9 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { removeThreadFromCustomFolders, type SidebarCustomFolder } from "../sidebarCustomFolders";
 import { useThreadActions } from "./useThreadActions";
 import { threadEnvironment } from "../state/threads";
 import { toastManager } from "../components/ui/toast";
@@ -55,7 +57,30 @@ vi.mock("./useHandleNewThread", () => ({
 vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
-vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
+const customFolders = vi.hoisted(() => ({
+  current: [] as readonly SidebarCustomFolder[],
+  remove: (
+    folders: readonly SidebarCustomFolder[],
+    _threadKey: string,
+  ): readonly SidebarCustomFolder[] => folders,
+}));
+vi.mock("../uiStateStore", () => ({
+  useUiStateStore: (
+    select: (state: {
+      markThreadUnread: () => void;
+      markThreadVisited: () => void;
+      removeThreadFromCustomFolders: (threadKey: string) => void;
+    }) => unknown,
+  ) =>
+    select({
+      markThreadUnread: () => {},
+      markThreadVisited: () => {},
+      removeThreadFromCustomFolders: (threadKey) => {
+        customFolders.current = customFolders.remove(customFolders.current, threadKey);
+      },
+    }),
+}));
+customFolders.remove = removeThreadFromCustomFolders;
 vi.mock("../lib/announce", () => ({ announce: vi.fn(), cancelAnnouncement: vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 const threadShell = vi.hoisted(() => ({
@@ -128,6 +153,7 @@ beforeEach(() => {
   threadShell.unsettledAt = null;
   threadShell.snoozedUntil = null;
   shellLoaded.current = true;
+  customFolders.current = [];
 });
 afterEach(() => {
   vi.runAllTimers();
@@ -380,6 +406,50 @@ describe("settle and snooze Undo", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, reason: "user" },
     });
+  });
+});
+
+describe("settle folder membership", () => {
+  const alsoSettled = {
+    environmentId: target.environmentId,
+    threadId: ThreadId.make("also"),
+  };
+  const kept = {
+    environmentId: target.environmentId,
+    threadId: ThreadId.make("kept"),
+  };
+
+  it("drops a thread from every folder only after settle succeeds", async () => {
+    const filedKey = scopedThreadKey(target);
+    const alsoKey = scopedThreadKey(alsoSettled);
+    const keptKey = scopedThreadKey(kept);
+    const filed = [
+      {
+        id: "cf_one",
+        name: "One",
+        collapsed: false,
+        threadKeys: [filedKey, alsoKey, keptKey],
+      },
+      { id: "cf_two", name: "Two", collapsed: true, threadKeys: [filedKey] },
+    ];
+    customFolders.current = filed;
+    const actions = useThreadActions();
+    commands.settle.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("Settle failed")),
+    });
+    await actions.settleThread(target);
+    expect(customFolders.current).toBe(filed);
+    await Promise.all([actions.settleThread(target), actions.settleThread(alsoSettled)]);
+    expect(customFolders.current).toEqual([
+      { id: "cf_one", name: "One", collapsed: false, threadKeys: [keptKey] },
+      { id: "cf_two", name: "Two", collapsed: true, threadKeys: [] },
+    ]);
+    await actions.unsettleThread(target);
+    expect(customFolders.current).toEqual([
+      { id: "cf_one", name: "One", collapsed: false, threadKeys: [keptKey] },
+      { id: "cf_two", name: "Two", collapsed: true, threadKeys: [] },
+    ]);
   });
 });
 

@@ -166,6 +166,7 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: (select: (store: unknown) => unknown) =>
     select({
       markThreadVisited: () => state.localEffects.push("mark-visited"),
+      removeThreadFromCustomFolders: () => {},
     }),
 }));
 vi.mock("../lib/archivedThreadsState", () => ({

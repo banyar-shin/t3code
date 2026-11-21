@@ -46,6 +46,7 @@ import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activit
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
+import { customFolderRowId } from "../sidebarCustomFolders";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
@@ -228,10 +229,24 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 
 export type SidebarListItem =
   | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker }
+  | { readonly kind: "custom-folder"; readonly folderId: string }
+  | { readonly kind: "custom-folder-thread"; readonly key: string; readonly folderId: string };
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  switch (item.kind) {
+    case "thread":
+    case "custom-folder-thread":
+      return item.key;
+    case "custom-folder":
+      return customFolderRowId(item.folderId);
+    case "marker":
+      return sidebarMarkerId(item.marker);
+    default: {
+      const exhaustive: never = item;
+      return exhaustive;
+    }
+  }
 }
 
 function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
@@ -253,22 +268,16 @@ type SidebarDropTarget = {
   readonly activeOrder: readonly string[];
 };
 
-export function resolveSidebarDropTarget(
+function sidebarDropTargetAt(
   items: readonly SidebarListItem[],
-  activeKey: string,
-  overId: string,
+  index: number,
 ): SidebarDropTarget | null {
-  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
-  const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
-  if (activeIndex === -1 || overIndex === -1 || items[activeIndex]?.kind !== "thread") return null;
-  const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, items[activeIndex]!);
-  const section = sectionAtSidebarSlot(moved, overIndex);
+  const section = sectionAtSidebarSlot(items, index);
   if (section === "working" || section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
-  for (const item of moved) {
+  for (const item of items) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
       else if (
@@ -277,10 +286,31 @@ export function resolveSidebarDropTarget(
         item.marker === "settled-header"
       )
         break;
-    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
-    else activeOrder.push(item.key);
+    } else if (item.kind === "thread" && currentSection === "pinned") pinnedOrder.push(item.key);
+    else if (item.kind === "thread") activeOrder.push(item.key);
   }
   return { section, pinnedOrder, activeOrder };
+}
+
+export function resolveSidebarDropTarget(
+  items: readonly SidebarListItem[],
+  activeKey: string,
+  overId: string,
+): SidebarDropTarget | null {
+  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
+  const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
+  if (overIndex === -1 || (activeIndex !== -1 && items[activeIndex]?.kind !== "thread"))
+    return null;
+  if (activeIndex === -1) {
+    // Folder rows sit above the inbox, so this matches a drag that started above the target.
+    const moved = items.slice();
+    const placedIndex = overIndex + 1;
+    moved.splice(placedIndex, 0, { kind: "thread", key: activeKey, section: "active" });
+    return sidebarDropTargetAt(moved, placedIndex);
+  }
+  const moved = items.filter((_, index) => index !== activeIndex);
+  moved.splice(overIndex, 0, items[activeIndex]!);
+  return sidebarDropTargetAt(moved, overIndex);
 }
 
 type SidebarThreadDropPlan =

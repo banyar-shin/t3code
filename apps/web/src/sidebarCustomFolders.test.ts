@@ -4,11 +4,15 @@ import {
   claimCustomFolderMembers,
   createCustomFolder,
   customFolderDisplayKeys,
+  customFolderRowId,
+  customFolderThreadPlacement,
   deleteCustomFolder,
   moveThreadToCustomFolder,
   nextCustomFolderName,
+  placeThreadInCustomFolder,
   removeThreadFromCustomFolders,
   renameCustomFolder,
+  resolveCustomFolderThreadDrop,
   sanitizeCustomFolders,
   setCustomFolderCollapsed,
   type SidebarCustomFolder,
@@ -82,6 +86,54 @@ describe("custom sidebar folders", () => {
     ]);
     expect(deleteCustomFolder(moved, "missing")).toBe(moved);
     expect(createCustomFolder(moved, "env:c", "new")).toBe(moved);
+  });
+
+  it("files a drop onto a folder header or before a thread, and leaves a cancelled drop alone", () => {
+    const folders = [
+      folder("cf_bugs", "Bugs", ["env:a", "env:hidden", "env:b"], true),
+      folder("cf_later", "Later", ["env:c", "env:d"]),
+    ];
+    expect(resolveCustomFolderThreadDrop(folders, customFolderRowId("cf_later"))).toEqual({
+      folderId: "cf_later",
+      beforeKey: null,
+    });
+    expect(resolveCustomFolderThreadDrop(folders, "env:b")).toEqual({
+      folderId: "cf_bugs",
+      beforeKey: "env:b",
+    });
+    expect(resolveCustomFolderThreadDrop(folders, "env:missing")).toBeNull();
+    expect(resolveCustomFolderThreadDrop(folders, customFolderRowId("cf_missing"))).toBeNull();
+    expect(customFolderThreadPlacement(folders, "env:b")).toEqual({
+      folderId: "cf_bugs",
+      beforeKey: null,
+    });
+    expect(customFolderThreadPlacement(folders, "env:missing")).toBeNull();
+
+    expect(placeThreadInCustomFolder(folders, "env:a", "cf_bugs", "env:a")).toBe(folders);
+    expect(placeThreadInCustomFolder(folders, "env:d", "cf_later", null)).toBe(folders);
+    expect(placeThreadInCustomFolder(folders, "env:a", "cf_missing", null)).toBe(folders);
+    expect(placeThreadInCustomFolder(folders, "", "cf_bugs", null)).toBe(folders);
+
+    expect(placeThreadInCustomFolder(folders, "env:b", "cf_bugs", "env:a")).toEqual([
+      folder("cf_bugs", "Bugs", ["env:b", "env:a", "env:hidden"], true),
+      folders[1],
+    ]);
+    expect(placeThreadInCustomFolder(folders, "env:a", "cf_bugs", null)[0]).toEqual(
+      folder("cf_bugs", "Bugs", ["env:hidden", "env:b", "env:a"], true),
+    );
+    expect(placeThreadInCustomFolder(folders, "env:d", "cf_bugs", "env:b")).toEqual([
+      folder("cf_bugs", "Bugs", ["env:a", "env:hidden", "env:d", "env:b"]),
+      folder("cf_later", "Later", ["env:c"]),
+    ]);
+    expect(placeThreadInCustomFolder(folders, "env:new", "cf_bugs", null)[0]?.threadKeys).toEqual([
+      "env:a",
+      "env:hidden",
+      "env:b",
+      "env:new",
+    ]);
+    expect(
+      placeThreadInCustomFolder(folders, "env:new", "cf_bugs", null, false)[0]?.collapsed,
+    ).toBe(true);
   });
 
   it("shows only the open thread while a folder is collapsed", () => {

@@ -3,14 +3,21 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, FolderIcon, SquarePenIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { memo, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
-import type { SidebarCustomFolder } from "../../sidebarCustomFolders";
+import { customFolderRowId, type SidebarCustomFolder } from "../../sidebarCustomFolders";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  resolveSidebarFolderDot,
+  resolveThreadLastVisitedAt,
+} from "../Sidebar.logic";
+import { SIDEBAR_SORTABLE_DRAG_DISABLED } from "./SidebarThreadRow";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -34,9 +41,7 @@ export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
 }
 
-export function customFolderRowId(folderId: string) {
-  return `custom-folder:${folderId}`;
-}
+export { customFolderRowId };
 
 function FolderRenameInput(props: {
   name: string;
@@ -78,8 +83,9 @@ function FolderRenameInput(props: {
   );
 }
 
+const FOLDER_ROW_CLASS_NAME = "group/project-folder relative mt-2 list-none first:mt-0";
+
 function SidebarFolderHeader(props: {
-  testId: string;
   rowId: string;
   collapsed: boolean;
   label: string;
@@ -144,10 +150,7 @@ function SidebarFolderHeader(props: {
     </>
   );
   return (
-    <li
-      data-testid={props.testId}
-      className="group/project-folder relative mt-2 list-none first:mt-0"
-    >
+    <>
       {props.rename ? (
         <div
           data-sidebar-row={props.rowId}
@@ -204,7 +207,7 @@ function SidebarFolderHeader(props: {
           </Tooltip>
         </span>
       ) : null}
-    </li>
+    </>
   );
 }
 
@@ -228,23 +231,24 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const gt = useGT();
   const { group, collapsed, hiddenThreads } = props;
   return (
-    <SidebarFolderHeader
-      testId="sidebar-project-folder"
-      rowId={sidebarFolderRowId(group.projectKey)}
-      collapsed={collapsed}
-      label={group.displayName}
-      icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
-      hiddenThreads={hiddenThreads}
-      onToggle={() => props.onToggle(group)}
-      onContextMenu={(position, source) => props.onContextMenu(group, position, source)}
-      newThreadLabel={gt("New thread in {project}", { project: group.displayName })}
-      newThreadPopup={
-        <T>
-          New thread in <Var>{group.displayName}</Var>
-        </T>
-      }
-      onNewThread={() => props.onNewThread(group)}
-    />
+    <li data-testid="sidebar-project-folder" className={FOLDER_ROW_CLASS_NAME}>
+      <SidebarFolderHeader
+        rowId={sidebarFolderRowId(group.projectKey)}
+        collapsed={collapsed}
+        label={group.displayName}
+        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
+        hiddenThreads={hiddenThreads}
+        onToggle={() => props.onToggle(group)}
+        onContextMenu={(position, source) => props.onContextMenu(group, position, source)}
+        newThreadLabel={gt("New thread in {project}", { project: group.displayName })}
+        newThreadPopup={
+          <T>
+            New thread in <Var>{group.displayName}</Var>
+          </T>
+        }
+        onNewThread={() => props.onNewThread(group)}
+      />
+    </li>
   );
 });
 
@@ -259,29 +263,43 @@ export const SidebarCustomFolderHeader = memo(function SidebarCustomFolderHeader
     source: ContextMenuSource,
   ) => void;
 }) {
+  const { setNodeRef, transform, transition } = useSortable({
+    id: customFolderRowId(props.folder.id),
+    disabled: SIDEBAR_SORTABLE_DRAG_DISABLED,
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
   const editingName = useUiStateStore((state) =>
     state.editingCustomFolderId === props.folder.id ? state.editingCustomFolderName : null,
   );
   return (
-    <SidebarFolderHeader
-      testId="sidebar-custom-folder"
-      rowId={customFolderRowId(props.folder.id)}
-      collapsed={props.collapsed}
-      label={props.folder.name}
-      icon={<FolderIcon aria-hidden className="size-4 shrink-0" />}
-      hiddenThreads={props.hiddenThreads}
-      onToggle={() => props.onToggle(props.folder.id)}
-      onContextMenu={(position, source) => props.onContextMenu(props.folder.id, position, source)}
-      rename={
-        editingName === null
-          ? undefined
-          : {
-              name: editingName,
-              onNameChange: (name) => useUiStateStore.getState().setEditingCustomFolderName(name),
-              onCommit: () => useUiStateStore.getState().commitCustomFolderRename(),
-              onCancel: () => useUiStateStore.getState().cancelCustomFolderRename(),
-            }
-      }
-    />
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+      }}
+      data-testid="sidebar-custom-folder"
+      className={FOLDER_ROW_CLASS_NAME}
+    >
+      <SidebarFolderHeader
+        rowId={customFolderRowId(props.folder.id)}
+        collapsed={props.collapsed}
+        label={props.folder.name}
+        icon={<FolderIcon aria-hidden className="size-4 shrink-0" />}
+        hiddenThreads={props.hiddenThreads}
+        onToggle={() => props.onToggle(props.folder.id)}
+        onContextMenu={(position, source) => props.onContextMenu(props.folder.id, position, source)}
+        rename={
+          editingName === null
+            ? undefined
+            : {
+                name: editingName,
+                onNameChange: (name) => useUiStateStore.getState().setEditingCustomFolderName(name),
+                onCommit: () => useUiStateStore.getState().commitCustomFolderRename(),
+                onCancel: () => useUiStateStore.getState().cancelCustomFolderRename(),
+              }
+        }
+      />
+    </li>
   );
 });

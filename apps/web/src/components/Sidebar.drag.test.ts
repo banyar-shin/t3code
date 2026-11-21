@@ -38,9 +38,11 @@ function layout(
     const height =
       item.kind === "thread"
         ? (item.section === "pinned" || item.section === "active" ? cardHeight : 36) * scale
-        : item.marker === "pinned-header" || item.marker === "pinned-divider"
-          ? 0
-          : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
+        : item.kind === "custom-folder" || item.kind === "custom-folder-thread"
+          ? 32 * scale
+          : item.marker === "pinned-header" || item.marker === "pinned-divider"
+            ? 0
+            : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
     const rect = { top, height, bottom: top + height, left: 0, right: 260, width: 260 };
     top += height + 1;
     return rect;
@@ -220,6 +222,45 @@ describe("sidebar collision detection", () => {
 });
 
 describe("sidebar drag projection", () => {
+  it("holds custom folder rows still while an inbox drag shifts", () => {
+    const inbox = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      marker("active-placeholder"),
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      marker("settled-placeholder"),
+      thread("s", "settled"),
+    ];
+    const input = {
+      items: inbox,
+      settledOrder: ["s"],
+      settledExpanded: true,
+      boundaryLabelHeight: 24,
+    };
+    const withFolders = {
+      ...input,
+      items: [
+        { kind: "custom-folder" as const, folderId: "cf_one" },
+        { kind: "custom-folder-thread" as const, key: "filed", folderId: "cf_one" },
+        ...inbox,
+      ],
+    };
+    const shifted = preview(withFolders, "a2", "a1");
+    const inboxOnly = preview(input, "a2", "a1");
+    expect(shifted.get("custom-folder:cf_one")).toEqual(stationary);
+    expect(shifted.get("filed")).toEqual(stationary);
+    expect(shifted.get("a1")).toEqual(inboxOnly.get("a1"));
+    expect(shifted.get("a2")).toEqual(inboxOnly.get("a2"));
+    expect(inboxOnly.get("a1")?.y).not.toBe(0);
+    const overFolder = preview(withFolders, "a2", "filed");
+    expect(
+      [...overFolder.values()].every((transform) => transform.y === 0 && transform.scaleY === 1),
+    ).toBe(true);
+  });
+
   it.each([
     ["a2", "a1"],
     ["p", "a1"],

@@ -119,7 +119,12 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { claimCustomFolderMembers, customFolderDisplayKeys } from "../sidebarCustomFolders";
+import {
+  claimCustomFolderMembers,
+  customFolderDisplayKeys,
+  customFolderThreadPlacement,
+  resolveCustomFolderThreadDrop,
+} from "../sidebarCustomFolders";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -2010,10 +2015,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
 
+  const folderSectionByThreadKey = new Map<string, SidebarSection>();
+  for (const folder of customFolderViews) {
+    for (const [key, section] of folder.sectionByThreadKey) {
+      folderSectionByThreadKey.set(key, section);
+    }
+  }
+  const sectionForDrag = (key: string) =>
+    sectionByThreadKey.get(key) ?? folderSectionByThreadKey.get(key);
   const handleThreadDragStart = (event: DragStartEvent) => {
     const activeKey = String(event.active.id);
     contextDragKeyRef.current = activeKey;
-    const activeSection = sectionByThreadKey.get(activeKey);
+    const activeSection = sectionForDrag(activeKey);
     if (activeSection === undefined) return;
     listMotionRef.current?.suspend();
     const list = threadListRef.current;
@@ -2051,6 +2064,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     // Boring mode keeps a pinned open project or one the user filtered to, so it can start a thread.
     if (
       !hasProjectFolders &&
+      customFolderViews.length === 0 &&
       pinnedThreads.length +
         activeThreads.length +
         workingThreads.length +
@@ -2094,15 +2108,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     // Update the local list too; threadByKey already omits rows moved into collapsed shelves.
     sidebarListItems = sidebarListItemsFresh;
   }
+  const draggingCustomFolderThread =
+    dragState !== null &&
+    customFolderViews.some((folder) =>
+      folder.threads.some((thread) => threadShellKey(thread) === dragState.activeKey),
+    );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the dnd-kit drag sensor when the dragged row leaves the list
   useEffect(() => {
     if (
       dragState !== null &&
+      !draggingCustomFolderThread &&
       !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
     ) {
       cancelThreadDrag();
     }
-  }, [cancelThreadDrag, dragState, sidebarListItems]);
+  }, [cancelThreadDrag, dragState, draggingCustomFolderThread, sidebarListItems]);
   // Only order, section, or draft changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
@@ -2110,7 +2130,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ?.map((folder) => `${folder.group.projectKey}:${folder.threads.length}`)
       .join("\n") ?? "",
     customFolderViews
-      .map((folder) => `${folder.folder.id}:${folder.collapsed}:${folder.threads.length}`)
+      .map(
+        (folder) =>
+          `${folder.folder.id}:${folder.collapsed}:${folder.threads.map((thread) => threadShellKey(thread)).join(",")}`,
+      )
       .join("\n"),
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
@@ -2133,16 +2156,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     listMotionRef.current?.update(listMotionPass.animate && shelvesUnchanged);
   }, [listMotionPass, shelfExpansionKey]);
   const handleThreadDragOver = (event: DragOverEvent) => {
-    const target = event.over
-      ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
-      : null;
+    const overId = event.over === null ? null : String(event.over.id);
+    const folderDrop =
+      overId === null
+        ? null
+        : resolveCustomFolderThreadDrop(useUiStateStore.getState().customFolders, overId);
+    const target =
+      overId === null || folderDrop !== null
+        ? null
+        : resolveSidebarDropTarget(sidebarListItems, String(event.active.id), overId);
     setDragState((current) =>
       current === null || current.activeKey !== String(event.active.id)
         ? current
         : { ...current, targetSection: target?.section ?? null },
     );
   };
-  const sortableIds = sidebarListItems.map(sidebarListItemId);
+  const sortableItems =
+    customFolderViews.length === 0
+      ? sidebarListItems
+      : [
+          ...customFolderViews.flatMap((folder): SidebarListItem[] => [
+            { kind: "custom-folder", folderId: folder.folder.id },
+            ...folder.threads.map((thread): SidebarListItem => ({
+              kind: "custom-folder-thread",
+              key: threadShellKey(thread),
+              folderId: folder.folder.id,
+            })),
+          ]),
+          ...sidebarListItems,
+        ];
+  const sortableIds = sortableItems.map(sidebarListItemId);
   // Keep non-drag orders constant to preserve sorting strategy and row identity during streaming.
   const { settledOrder: draggedSettledOrder, activeOrder: draggedActiveOrder } =
     dragState === null
@@ -2155,7 +2198,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           workingShelfEnabled,
         });
   const sidebarSortingStrategy = createSidebarSortingStrategy({
-    items: sidebarListItems,
+    items: sortableItems,
     enabled: !isContextDrag,
     boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
     settledOrder: draggedSettledOrder,
@@ -2175,6 +2218,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
+        if (resolveCustomFolderThreadDrop(useUiStateStore.getState().customFolders, id) !== null) {
+          return true;
+        }
         const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
         if (target === null) return false;
         return (
@@ -2202,13 +2248,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     );
   })();
   const handleThreadDragEnd = (event: DragEndEvent) => {
-    if (projectFolders !== null) return;
     const activeKey = String(event.active.id);
-    const activeSection = sectionByThreadKey.get(activeKey);
+    const overId = event.over === null ? null : String(event.over.id);
+    if (overId !== null) {
+      const placement = resolveCustomFolderThreadDrop(
+        useUiStateStore.getState().customFolders,
+        overId,
+      );
+      if (placement !== null) {
+        useUiStateStore
+          .getState()
+          .placeThreadInCustomFolder(activeKey, placement.folderId, placement.beforeKey);
+        return;
+      }
+    }
+    if (projectFolders !== null) return;
+    const activeSection = sectionForDrag(activeKey);
     const target =
-      event.over === null
-        ? null
-        : resolveSidebarDropTarget(sidebarListItems, activeKey, String(event.over.id));
+      overId === null ? null : resolveSidebarDropTarget(sidebarListItems, activeKey, overId);
     const activeThread = threadByKey.get(activeKey);
     if (activeSection === undefined || target === null || activeThread === undefined) return;
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -2247,6 +2304,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       )
     )
       return;
+    const home = customFolderThreadPlacement(useUiStateStore.getState().customFolders, activeKey);
+    if (home !== null) useUiStateStore.getState().removeThreadFromCustomFolders(activeKey);
     const drop = {
       key: activeKey,
       sourceSection: activeSection,
@@ -2262,84 +2321,108 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     };
     setOptimisticDrop(drop);
     void (async () => {
-      const run = async (
-        operation: Promise<AtomCommandResult<unknown, unknown>>,
-        title: string,
-      ) => {
-        const result = await operation;
-        if (result._tag === "Success") return true;
-        setOptimisticDrop((current) => (current === drop ? null : current));
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title,
-              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-            }),
-          );
+      let applied = false;
+      try {
+        const run = async (
+          operation: Promise<AtomCommandResult<unknown, unknown>>,
+          title: string,
+        ) => {
+          const result = await operation;
+          if (result._tag === "Success") return true;
+          setOptimisticDrop((current) => (current === drop ? null : current));
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title,
+                description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+              }),
+            );
+          }
+          return false;
+        };
+        switch (plan.kind) {
+          case "settle": {
+            settlingThreadKeysRef.current.add(activeKey);
+            const navigateAfterSettle = planForwardNavigation(activeKey);
+            const settled = await run(
+              settleThread(threadRef),
+              gt("Failed to settle thread"),
+            ).finally(() => settlingThreadKeysRef.current.delete(activeKey));
+            applied = settled;
+            if (
+              settled &&
+              shouldNavigateAfterThreadPark({
+                threadKey: activeKey,
+                currentThreadKey: readRouteThreadKey(router),
+                action: "settle",
+                now: new Date().toISOString(),
+                thread: readThreadShell(threadRef),
+              })
+            )
+              navigateAfterSettle?.();
+            return;
+          }
+          case "move-active":
+            if (plan.unpin && !(await run(unpinThread(threadRef), gt("Failed to unpin thread"))))
+              return;
+            if (
+              plan.unsettle &&
+              !(await run(unsettleThread(threadRef), gt("Failed to un-settle thread")))
+            )
+              return;
+            if (
+              plan.unsnooze &&
+              !(await run(unsnoozeThread(threadRef), gt("Failed to wake thread")))
+            )
+              return;
+            break;
+          case "pin":
+            if (
+              !(await run(
+                pinThread(
+                  threadRef,
+                  plan.orderKey === undefined ? {} : { orderKey: plan.orderKey },
+                ),
+                gt("Failed to pin thread"),
+              ))
+            )
+              return;
+            break;
+          case "reorder-pinned":
+            break;
         }
-        return false;
-      };
-      switch (plan.kind) {
-        case "settle": {
-          settlingThreadKeysRef.current.add(activeKey);
-          const navigateAfterSettle = planForwardNavigation(activeKey);
-          const settled = await run(settleThread(threadRef), gt("Failed to settle thread")).finally(
-            () => settlingThreadKeysRef.current.delete(activeKey),
-          );
-          if (
-            settled &&
-            shouldNavigateAfterThreadPark({
-              threadKey: activeKey,
-              currentThreadKey: readRouteThreadKey(router),
-              action: "settle",
-              now: new Date().toISOString(),
-              thread: readThreadShell(threadRef),
-            })
-          )
-            navigateAfterSettle?.();
-          return;
-        }
-        case "move-active":
-          if (plan.unpin && !(await run(unpinThread(threadRef), gt("Failed to unpin thread"))))
-            return;
-          if (
-            plan.unsettle &&
-            !(await run(unsettleThread(threadRef), gt("Failed to un-settle thread")))
-          )
-            return;
-          if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), gt("Failed to wake thread"))))
-            return;
-          break;
-        case "pin":
+        const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
+        for (const assignment of keyWrites) {
+          const thread = threadByKey.get(assignment.id);
+          if (thread === undefined) continue;
           if (
             !(await run(
-              pinThread(threadRef, plan.orderKey === undefined ? {} : { orderKey: plan.orderKey }),
-              gt("Failed to pin thread"),
+              (plan.kind === "move-active" ? reorderActiveThread : reorderPinnedThread)(
+                scopeThreadRef(thread.environmentId, thread.id),
+                assignment.orderKey,
+              ),
+              plan.kind === "move-active"
+                ? gt("Failed to reorder active threads")
+                : gt("Failed to reorder pinned threads"),
             ))
           )
             return;
-          break;
-        case "reorder-pinned":
-          break;
-      }
-      const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
-      for (const assignment of keyWrites) {
-        const thread = threadByKey.get(assignment.id);
-        if (thread === undefined) continue;
+        }
+        applied = true;
+      } finally {
         if (
-          !(await run(
-            (plan.kind === "move-active" ? reorderActiveThread : reorderPinnedThread)(
-              scopeThreadRef(thread.environmentId, thread.id),
-              assignment.orderKey,
-            ),
-            plan.kind === "move-active"
-              ? gt("Failed to reorder active threads")
-              : gt("Failed to reorder pinned threads"),
-          ))
-        )
-          return;
+          !applied &&
+          home !== null &&
+          !useUiStateStore
+            .getState()
+            .customFolders.some((folder) => folder.threadKeys.includes(activeKey))
+        ) {
+          useUiStateStore
+            .getState()
+            .placeThreadInCustomFolder(activeKey, home.folderId, home.beforeKey, false);
+        }
       }
     })();
   };
@@ -3686,7 +3769,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         for (const thread of folder.threads) {
                           const section = folder.sectionByThreadKey.get(threadShellKey(thread));
                           if (section === undefined) continue;
-                          items.push(renderThreadRow(thread, section, rowId, false));
+                          items.push(renderThreadRow(thread, section, rowId));
                         }
                       }
                       for (const item of sidebarListItems) {

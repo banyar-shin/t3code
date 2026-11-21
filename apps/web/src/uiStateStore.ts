@@ -1,7 +1,20 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import { PullRequestMergeMethod } from "@t3tools/contracts";
+import { uuidV4Unsafe } from "effect/crypto/SecureRandom";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
+
+import {
+  createCustomFolder as createCustomFolderRecord,
+  deleteCustomFolder as deleteCustomFolderRecord,
+  moveThreadToCustomFolder as moveThreadToCustomFolderRecord,
+  removeThreadFromCustomFolders as removeThreadFromCustomFoldersRecord,
+  renameCustomFolder as renameCustomFolderRecord,
+  sanitizeCustomFolders,
+  setCustomFolderCollapsed as setCustomFolderCollapsedRecord,
+  type SidebarCustomFolder,
+} from "./sidebarCustomFolders";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
@@ -31,6 +44,7 @@ export interface PersistedUiState {
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
+  customFolders?: unknown;
 }
 
 export interface UiProjectState {
@@ -52,8 +66,12 @@ export interface UiPullRequestState {
   pullRequestMergeMethod: PullRequestMergeMethod;
 }
 
+export interface UiCustomFolderState {
+  customFolders: readonly SidebarCustomFolder[];
+}
+
 export interface UiState
-  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
+  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState, UiCustomFolderState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
@@ -63,6 +81,7 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
+  customFolders: [],
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -99,6 +118,8 @@ function sanitizeOptionalKey(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
+
 function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object") {
     return {};
@@ -112,10 +133,6 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
         Number.isFinite(Date.parse(entry[1])),
     ),
   );
-}
-
-function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMethod {
-  return value === "merge" || value === "squash" || value === "rebase";
 }
 
 export function parsePersistedState(parsed: PersistedUiState): UiState {
@@ -157,6 +174,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
+    customFolders: sanitizeCustomFolders(parsed.customFolders),
   };
 }
 
@@ -215,15 +233,10 @@ export function persistState(state: UiState): void {
     return;
   }
   try {
-    const projectExpandedById = Object.fromEntries(
-      Object.entries(state.projectExpandedById).filter(
-        ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
-      ),
-    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        projectExpandedById,
+        projectExpandedById: state.projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
@@ -236,6 +249,7 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
+        customFolders: state.customFolders,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -428,7 +442,12 @@ export function reorderProjects(
   };
 }
 
-interface UiStateStore extends UiState {
+interface CustomFolderEditingState {
+  editingCustomFolderId: string | null;
+  editingCustomFolderName: string;
+}
+
+interface UiStateStore extends UiState, CustomFolderEditingState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -441,10 +460,35 @@ interface UiStateStore extends UiState {
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
   ) => void;
+  createCustomFolder: (threadKey: string) => void;
+  beginCustomFolderRename: (id: string) => void;
+  setEditingCustomFolderName: (name: string) => void;
+  commitCustomFolderRename: () => void;
+  cancelCustomFolderRename: () => void;
+  deleteCustomFolder: (id: string) => void;
+  setCustomFolderCollapsed: (id: string, collapsed: boolean) => void;
+  moveThreadToCustomFolder: (threadKey: string, folderId: string) => void;
+  removeThreadFromCustomFolders: (threadKey: string) => void;
+}
+
+function commitEditingFolders(state: UiStateStore): readonly SidebarCustomFolder[] {
+  return state.editingCustomFolderId === null
+    ? state.customFolders
+    : renameCustomFolderRecord(
+        state.customFolders,
+        state.editingCustomFolderId,
+        state.editingCustomFolderName,
+      );
+}
+
+function customFolderId(): string {
+  return `cf_${uuidV4Unsafe()}`;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  editingCustomFolderId: null,
+  editingCustomFolderName: "",
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
@@ -462,6 +506,98 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
     ),
+  createCustomFolder: (threadKey) =>
+    set((state) => {
+      const id = customFolderId();
+      const customFolders = createCustomFolderRecord(commitEditingFolders(state), threadKey, id);
+      const created = customFolders.find((folder) => folder.id === id);
+      if (created === undefined) return state;
+      return {
+        customFolders,
+        editingCustomFolderId: id,
+        editingCustomFolderName: created.name,
+      };
+    }),
+  beginCustomFolderRename: (id) =>
+    set((state) => {
+      const customFolders = commitEditingFolders(state);
+      const folder = customFolders.find((candidate) => candidate.id === id);
+      if (folder === undefined) {
+        return customFolders === state.customFolders
+          ? state
+          : { customFolders, editingCustomFolderId: null, editingCustomFolderName: "" };
+      }
+      if (
+        state.editingCustomFolderId === id &&
+        customFolders === state.customFolders &&
+        state.editingCustomFolderName === folder.name
+      ) {
+        return state;
+      }
+      return {
+        customFolders,
+        editingCustomFolderId: id,
+        editingCustomFolderName: folder.name,
+      };
+    }),
+  setEditingCustomFolderName: (name) =>
+    set((state) =>
+      state.editingCustomFolderId === null || state.editingCustomFolderName === name
+        ? state
+        : { editingCustomFolderName: name },
+    ),
+  commitCustomFolderRename: () =>
+    set((state) => {
+      if (state.editingCustomFolderId === null) return state;
+      return {
+        customFolders: renameCustomFolderRecord(
+          state.customFolders,
+          state.editingCustomFolderId,
+          state.editingCustomFolderName,
+        ),
+        editingCustomFolderId: null,
+        editingCustomFolderName: "",
+      };
+    }),
+  cancelCustomFolderRename: () =>
+    set((state) =>
+      state.editingCustomFolderId === null
+        ? state
+        : { editingCustomFolderId: null, editingCustomFolderName: "" },
+    ),
+  deleteCustomFolder: (id) =>
+    set((state) => {
+      const customFolders = deleteCustomFolderRecord(commitEditingFolders(state), id);
+      if (customFolders === state.customFolders && state.editingCustomFolderId !== id) return state;
+      return {
+        customFolders,
+        ...(state.editingCustomFolderId === id
+          ? { editingCustomFolderId: null, editingCustomFolderName: "" }
+          : {}),
+      };
+    }),
+  setCustomFolderCollapsed: (id, collapsed) =>
+    set((state) => {
+      const customFolders = setCustomFolderCollapsedRecord(state.customFolders, id, collapsed);
+      return customFolders === state.customFolders ? state : { customFolders };
+    }),
+  moveThreadToCustomFolder: (threadKey, folderId) =>
+    set((state) => {
+      const customFolders = moveThreadToCustomFolderRecord(
+        commitEditingFolders(state),
+        threadKey,
+        folderId,
+      );
+      return customFolders === state.customFolders ? state : { customFolders };
+    }),
+  removeThreadFromCustomFolders: (threadKey) =>
+    set((state) => {
+      const customFolders = removeThreadFromCustomFoldersRecord(
+        commitEditingFolders(state),
+        threadKey,
+      );
+      return customFolders === state.customFolders ? state : { customFolders };
+    }),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

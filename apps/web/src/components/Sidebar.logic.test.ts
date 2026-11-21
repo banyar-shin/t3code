@@ -25,6 +25,7 @@ import {
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
+  sidebarMarkerId,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
   sortScopedProjectsForSidebar,
@@ -1201,6 +1202,30 @@ describe("Working shelf (beta)", () => {
         activeOrder: ["a1", "a2", "p1"],
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
+
+      const leading: readonly SidebarListItem[] = [
+        marker("working-header"),
+        row("w1", "working"),
+        marker("pinned-header"),
+        row("p1", "pinned"),
+        marker("pinned-divider"),
+        row("a1", "active"),
+        row("a2", "active"),
+        marker("settled-header"),
+        row("s1", "settled"),
+      ];
+      expect(resolveSidebarDropTarget(leading, "a1", "w1")).toBeNull();
+      expect(resolveSidebarDropTarget(leading, "a1", sidebarMarkerId("working-header"))).toBeNull();
+      expect(resolveSidebarDropTarget(leading, "a1", sidebarMarkerId("pinned-header"))).toEqual({
+        section: "pinned",
+        pinnedOrder: ["a1", "p1"],
+        activeOrder: ["a2"],
+      });
+      expect(resolveSidebarDropTarget(leading, "p1", "a2")).toEqual({
+        section: "active",
+        pinnedOrder: [],
+        activeOrder: ["a1", "a2", "p1"],
+      });
     });
 
     it.each([

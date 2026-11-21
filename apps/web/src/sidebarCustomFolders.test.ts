@@ -84,15 +84,43 @@ describe("custom sidebar folders", () => {
     expect(createCustomFolder(moved, "env:c", "new")).toBe(moved);
   });
 
-  it("shows only the open thread while a folder is collapsed", () => {
-    expect(customFolderDisplayKeys(["env:a", "env:b"], true, "env:b")).toEqual({
+  it("keeps pinned members visible and lists them ahead of the rest", () => {
+    const members = ["env:a", "env:b", "env:c", "env:d"];
+    const pinned = new Set(["env:c", "env:a"]);
+
+    expect(customFolderDisplayKeys(members, true, "env:b", pinned)).toEqual({
+      visibleKeys: ["env:a", "env:b", "env:c"],
+      hiddenKeys: ["env:d"],
+    });
+    expect(customFolderDisplayKeys(members, true, "env:a", pinned)).toEqual({
+      visibleKeys: ["env:a", "env:c"],
+      hiddenKeys: ["env:b", "env:d"],
+    });
+    expect(customFolderDisplayKeys(members, true, null, pinned)).toEqual({
+      visibleKeys: ["env:a", "env:c"],
+      hiddenKeys: ["env:b", "env:d"],
+    });
+    expect(customFolderDisplayKeys(members, true, "env:missing", pinned)).toEqual({
+      visibleKeys: ["env:a", "env:c"],
+      hiddenKeys: ["env:b", "env:d"],
+    });
+    expect(customFolderDisplayKeys(["env:a", "env:b"], true, "env:b", new Set())).toEqual({
       visibleKeys: ["env:b"],
       hiddenKeys: ["env:a"],
     });
-    expect(customFolderDisplayKeys(["env:a"], true, null)).toEqual({
+    expect(customFolderDisplayKeys(["env:a"], true, null, new Set())).toEqual({
       visibleKeys: [],
       hiddenKeys: ["env:a"],
     });
-    expect(customFolderDisplayKeys(["env:a", "env:b"], false, "env:b").hiddenKeys).toEqual([]);
+    expect(customFolderDisplayKeys(members, false, "env:b", pinned)).toEqual({
+      visibleKeys: ["env:a", "env:c", "env:b", "env:d"],
+      hiddenKeys: [],
+    });
+    expect(
+      customFolderDisplayKeys(["env:a", "env:b"], false, null, new Set(["env:z", "env:b"])),
+    ).toEqual({
+      visibleKeys: ["env:b", "env:a"],
+      hiddenKeys: [],
+    });
   });
 });

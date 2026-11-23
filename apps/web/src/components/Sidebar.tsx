@@ -536,7 +536,15 @@ function useSidebarThreads(input: {
   );
   const filedThreadKeys = new Set(claimedFolders.flatMap((entry) => entry.memberKeys));
   const customFolderViews = claimedFolders.map(({ folder, memberKeys }) => {
-    const display = customFolderDisplayKeys(memberKeys, folder.collapsed, routeRowThreadKey);
+    const pinnedMemberKeys = new Set(
+      memberKeys.filter((key) => visibleThreadByKey.get(key)?.pinnedAt != null),
+    );
+    const display = customFolderDisplayKeys(
+      memberKeys,
+      folder.collapsed,
+      routeRowThreadKey,
+      pinnedMemberKeys,
+    );
     return {
       folder,
       collapsed: folder.collapsed,

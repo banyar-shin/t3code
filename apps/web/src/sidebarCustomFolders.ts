@@ -1,3 +1,7 @@
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
+
 export interface SidebarCustomFolder {
   readonly id: string;
   readonly name: string;
@@ -39,10 +43,15 @@ export function sanitizeCustomFolders(value: unknown): readonly SidebarCustomFol
 
 export function nextCustomFolderName(folders: readonly SidebarCustomFolder[]): string {
   const names = new Set(folders.map((folder) => folder.name));
-  if (!names.has("New folder")) return "New folder";
+  const base = m(msg("New folder"));
+  if (!names.has(base)) return base;
   let index = 2;
-  while (names.has(`New folder ${index}`)) index += 1;
-  return `New folder ${index}`;
+  let name = m(msg("New folder {index}", { index }));
+  while (names.has(name)) {
+    index += 1;
+    name = m(msg("New folder {index}", { index }));
+  }
+  return name;
 }
 
 function withoutThread(
@@ -135,19 +144,28 @@ export function removeThreadFromCustomFolders(
   return withoutThread(folders, threadKey);
 }
 
-/** A closed folder still shows the open thread and counts the rest. */
 export function customFolderDisplayKeys(
   memberKeys: readonly string[],
   collapsed: boolean,
   routeThreadKey: string | null,
+  pinnedKeys: ReadonlySet<string>,
 ): { readonly visibleKeys: readonly string[]; readonly hiddenKeys: readonly string[] } {
-  if (!collapsed) return { visibleKeys: memberKeys, hiddenKeys: [] };
-  const visibleKeys =
-    routeThreadKey !== null && memberKeys.includes(routeThreadKey) ? [routeThreadKey] : [];
-  return {
-    visibleKeys,
-    hiddenKeys: memberKeys.filter((key) => !visibleKeys.includes(key)),
-  };
+  if (!collapsed) {
+    const pinnedVisible: string[] = [];
+    const otherVisible: string[] = [];
+    for (const key of memberKeys) {
+      if (pinnedKeys.has(key)) pinnedVisible.push(key);
+      else otherVisible.push(key);
+    }
+    return { visibleKeys: [...pinnedVisible, ...otherVisible], hiddenKeys: [] };
+  }
+  const visibleKeys: string[] = [];
+  const hiddenKeys: string[] = [];
+  for (const key of memberKeys) {
+    if (pinnedKeys.has(key) || key === routeThreadKey) visibleKeys.push(key);
+    else hiddenKeys.push(key);
+  }
+  return { visibleKeys, hiddenKeys };
 }
 
 export function claimCustomFolderMembers(

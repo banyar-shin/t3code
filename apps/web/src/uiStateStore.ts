@@ -11,6 +11,7 @@ import {
   moveThreadToCustomFolder as moveThreadToCustomFolderRecord,
   removeThreadFromCustomFolders as removeThreadFromCustomFoldersRecord,
   renameCustomFolder as renameCustomFolderRecord,
+  reorderCustomFolders as reorderCustomFoldersRecord,
   sanitizeCustomFolders,
   setCustomFolderCollapsed as setCustomFolderCollapsedRecord,
   type SidebarCustomFolder,
@@ -467,6 +468,7 @@ interface UiStateStore extends UiState, CustomFolderEditingState {
   cancelCustomFolderRename: () => void;
   deleteCustomFolder: (id: string) => void;
   setCustomFolderCollapsed: (id: string, collapsed: boolean) => void;
+  reorderCustomFolders: (draggedId: string, beforeId: string | null) => void;
   moveThreadToCustomFolder: (threadKey: string, folderId: string) => void;
   removeThreadFromCustomFolders: (threadKey: string) => void;
 }
@@ -579,6 +581,11 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setCustomFolderCollapsed: (id, collapsed) =>
     set((state) => {
       const customFolders = setCustomFolderCollapsedRecord(state.customFolders, id, collapsed);
+      return customFolders === state.customFolders ? state : { customFolders };
+    }),
+  reorderCustomFolders: (draggedId, beforeId) =>
+    set((state) => {
+      const customFolders = reorderCustomFoldersRecord(state.customFolders, draggedId, beforeId);
       return customFolders === state.customFolders ? state : { customFolders };
     }),
   moveThreadToCustomFolder: (threadKey, folderId) =>

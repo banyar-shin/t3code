@@ -144,6 +144,38 @@ export function removeThreadFromCustomFolders(
   return withoutThread(folders, threadKey);
 }
 
+export function reorderCustomFolders(
+  folders: readonly SidebarCustomFolder[],
+  draggedId: string,
+  beforeId: string | null,
+): readonly SidebarCustomFolder[] {
+  const from = folders.findIndex((folder) => folder.id === draggedId);
+  if (from === -1) return folders;
+  const to =
+    beforeId === null ? folders.length : folders.findIndex((folder) => folder.id === beforeId);
+  if (to === -1) return folders;
+  const insertAt = to > from ? to - 1 : to;
+  if (insertAt === from) return folders;
+  const next = folders.slice();
+  const dragged = next[from];
+  if (dragged === undefined) return folders;
+  next.splice(from, 1);
+  next.splice(insertAt, 0, dragged);
+  return next;
+}
+
+export function customFolderDropBeforeId(
+  ids: readonly string[],
+  draggedId: string,
+  overId: string,
+): string | null | undefined {
+  const from = ids.indexOf(draggedId);
+  const over = ids.indexOf(overId);
+  if (from === -1 || over === -1 || from === over) return undefined;
+  if (from < over) return ids[over + 1] ?? null;
+  return ids[over];
+}
+
 export function customFolderDisplayKeys(
   memberKeys: readonly string[],
   collapsed: boolean,

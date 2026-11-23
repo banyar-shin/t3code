@@ -1,6 +1,8 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ContextMenuSource } from "@t3tools/contracts";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { ChevronDownIcon, FolderIcon, SquarePenIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
@@ -10,7 +12,11 @@ import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarCustomFolder } from "../../sidebarCustomFolders";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  resolveSidebarFolderDot,
+  resolveThreadLastVisitedAt,
+} from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -34,9 +40,25 @@ export function sidebarFolderRowId(projectKey: string) {
   return `folder:${projectKey}`;
 }
 
+const CUSTOM_FOLDER_ROW_PREFIX = "custom-folder:";
+
 export function customFolderRowId(folderId: string) {
-  return `custom-folder:${folderId}`;
+  return `${CUSTOM_FOLDER_ROW_PREFIX}${folderId}`;
 }
+
+export function customFolderIdFromRowId(rowId: string): string | null {
+  return rowId.startsWith(CUSTOM_FOLDER_ROW_PREFIX)
+    ? rowId.slice(CUSTOM_FOLDER_ROW_PREFIX.length)
+    : null;
+}
+
+const CUSTOM_FOLDER_DRAG_ENABLED = { draggable: false } as const;
+const CUSTOM_FOLDER_DRAG_DISABLED = { draggable: true } as const;
+
+type CustomFolderDrag = Pick<
+  ReturnType<typeof useSortable>,
+  "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition" | "isDragging"
+>;
 
 function FolderRenameInput(props: {
   name: string;
@@ -98,6 +120,8 @@ function SidebarFolderHeader(props: {
         readonly onCancel: () => void;
       }
     | undefined;
+  drag?: CustomFolderDrag | undefined;
+  children?: ReactNode;
 }) {
   const m = useMessages();
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
@@ -143,10 +167,24 @@ function SidebarFolderHeader(props: {
       />
     </>
   );
+  const drag = props.drag;
   return (
     <li
+      ref={drag?.setNodeRef}
       data-testid={props.testId}
-      className="group/project-folder relative mt-2 list-none first:mt-0"
+      className={cn(
+        "group/project-folder relative mt-2 list-none first:mt-0",
+        props.children != null && "flex flex-col gap-px",
+        drag?.isDragging && "z-20 bg-sidebar shadow-md",
+      )}
+      style={
+        drag
+          ? {
+              transform: CSS.Translate.toString(drag.transform),
+              transition: drag.transition,
+            }
+          : undefined
+      }
     >
       {props.rename ? (
         <div
@@ -166,7 +204,9 @@ function SidebarFolderHeader(props: {
         </div>
       ) : (
         <button
+          ref={drag?.setActivatorNodeRef}
           type="button"
+          {...(drag?.listeners ?? {})}
           data-sidebar-row={props.rowId}
           aria-expanded={!props.collapsed}
           onClick={props.onToggle}
@@ -183,6 +223,11 @@ function SidebarFolderHeader(props: {
           {trailing}
         </button>
       )}
+      {props.children != null ? (
+        <ul role="presentation" className="m-0 flex list-none flex-col gap-px p-0">
+          {props.children}
+        </ul>
+      ) : null}
       {props.onNewThread ? (
         // The count hides while this button is hovered or focused, so it can sit over the count.
         <span className="absolute inset-y-0 right-6 flex items-center opacity-0 focus-within:opacity-100 group-hover/project-folder:opacity-100 pointer-coarse:opacity-100">
@@ -258,10 +303,17 @@ export const SidebarCustomFolderHeader = memo(function SidebarCustomFolderHeader
     position: { x: number; y: number },
     source: ContextMenuSource,
   ) => void;
+  children?: ReactNode;
 }) {
   const editingName = useUiStateStore((state) =>
     state.editingCustomFolderId === props.folder.id ? state.editingCustomFolderName : null,
   );
+  const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } =
+    useSortable({
+      id: customFolderRowId(props.folder.id),
+      disabled: editingName === null ? CUSTOM_FOLDER_DRAG_ENABLED : CUSTOM_FOLDER_DRAG_DISABLED,
+      animateLayoutChanges: animateSidebarLayoutChanges,
+    });
   return (
     <SidebarFolderHeader
       testId="sidebar-custom-folder"
@@ -272,6 +324,7 @@ export const SidebarCustomFolderHeader = memo(function SidebarCustomFolderHeader
       hiddenThreads={props.hiddenThreads}
       onToggle={() => props.onToggle(props.folder.id)}
       onContextMenu={(position, source) => props.onContextMenu(props.folder.id, position, source)}
+      drag={{ isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition }}
       rename={
         editingName === null
           ? undefined
@@ -282,6 +335,8 @@ export const SidebarCustomFolderHeader = memo(function SidebarCustomFolderHeader
               onCancel: () => useUiStateStore.getState().cancelCustomFolderRename(),
             }
       }
-    />
+    >
+      {props.children}
+    </SidebarFolderHeader>
   );
 });

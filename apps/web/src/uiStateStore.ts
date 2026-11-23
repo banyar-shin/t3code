@@ -9,6 +9,7 @@ import {
   createCustomFolder as createCustomFolderRecord,
   deleteCustomFolder as deleteCustomFolderRecord,
   moveThreadToCustomFolder as moveThreadToCustomFolderRecord,
+  placeThreadInCustomFolder as placeThreadInCustomFolderRecord,
   removeThreadFromCustomFolders as removeThreadFromCustomFoldersRecord,
   renameCustomFolder as renameCustomFolderRecord,
   reorderCustomFolders as reorderCustomFoldersRecord,
@@ -470,6 +471,12 @@ interface UiStateStore extends UiState, CustomFolderEditingState {
   setCustomFolderCollapsed: (id: string, collapsed: boolean) => void;
   reorderCustomFolders: (draggedId: string, beforeId: string | null) => void;
   moveThreadToCustomFolder: (threadKey: string, folderId: string) => void;
+  placeThreadInCustomFolder: (
+    threadKey: string,
+    folderId: string,
+    beforeKey: string | null,
+    expand?: boolean,
+  ) => void;
   removeThreadFromCustomFolders: (threadKey: string) => void;
 }
 
@@ -594,6 +601,17 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         commitEditingFolders(state),
         threadKey,
         folderId,
+      );
+      return customFolders === state.customFolders ? state : { customFolders };
+    }),
+  placeThreadInCustomFolder: (threadKey, folderId, beforeKey, expand = true) =>
+    set((state) => {
+      const customFolders = placeThreadInCustomFolderRecord(
+        commitEditingFolders(state),
+        threadKey,
+        folderId,
+        beforeKey,
+        expand,
       );
       return customFolders === state.customFolders ? state : { customFolders };
     }),

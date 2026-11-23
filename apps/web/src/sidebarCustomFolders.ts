@@ -137,6 +137,82 @@ export function moveThreadToCustomFolder(
   );
 }
 
+const CUSTOM_FOLDER_ROW_PREFIX = "custom-folder:";
+
+export function customFolderRowId(folderId: string) {
+  return `${CUSTOM_FOLDER_ROW_PREFIX}${folderId}`;
+}
+
+export interface CustomFolderThreadPlacement {
+  readonly folderId: string;
+  readonly beforeKey: string | null;
+}
+
+export function resolveCustomFolderThreadDrop(
+  folders: readonly SidebarCustomFolder[],
+  overId: string,
+): CustomFolderThreadPlacement | null {
+  if (overId.startsWith(CUSTOM_FOLDER_ROW_PREFIX)) {
+    const folderId = overId.slice(CUSTOM_FOLDER_ROW_PREFIX.length);
+    return folders.some((folder) => folder.id === folderId) ? { folderId, beforeKey: null } : null;
+  }
+  const folder = folders.find((candidate) => candidate.threadKeys.includes(overId));
+  return folder === undefined ? null : { folderId: folder.id, beforeKey: overId };
+}
+
+export function customFolderThreadPlacement(
+  folders: readonly SidebarCustomFolder[],
+  threadKey: string,
+): CustomFolderThreadPlacement | null {
+  for (const folder of folders) {
+    const index = folder.threadKeys.indexOf(threadKey);
+    if (index === -1) continue;
+    return { folderId: folder.id, beforeKey: folder.threadKeys[index + 1] ?? null };
+  }
+  return null;
+}
+
+export function placeThreadInCustomFolder(
+  folders: readonly SidebarCustomFolder[],
+  threadKey: string,
+  folderId: string,
+  beforeKey: string | null,
+  expand = true,
+): readonly SidebarCustomFolder[] {
+  if (threadKey.length === 0 || beforeKey === threadKey) return folders;
+  const targetIndex = folders.findIndex((folder) => folder.id === folderId);
+  const target = folders[targetIndex];
+  if (target === undefined) return folders;
+  const source = folders.find((folder) => folder.threadKeys.includes(threadKey));
+  if (source?.id === folderId) {
+    const from = target.threadKeys.indexOf(threadKey);
+    let to = beforeKey === null ? target.threadKeys.length : target.threadKeys.indexOf(beforeKey);
+    if (from === -1 || to === -1) return folders;
+    if (from < to) to -= 1;
+    if (from === to) return folders;
+    const threadKeys = target.threadKeys.slice();
+    threadKeys.splice(from, 1);
+    threadKeys.splice(to, 0, threadKey);
+    const next = folders.slice();
+    next[targetIndex] = { ...target, threadKeys };
+    return next;
+  }
+  const stripped = withoutThread(folders, threadKey);
+  const nextTargetIndex = stripped.findIndex((folder) => folder.id === folderId);
+  const nextTarget = stripped[nextTargetIndex];
+  if (nextTarget === undefined) return folders;
+  const threadKeys = nextTarget.threadKeys.slice();
+  const at = beforeKey === null ? threadKeys.length : threadKeys.indexOf(beforeKey);
+  threadKeys.splice(at < 0 ? threadKeys.length : at, 0, threadKey);
+  const next = stripped.slice();
+  next[nextTargetIndex] = {
+    ...nextTarget,
+    collapsed: expand ? false : nextTarget.collapsed,
+    threadKeys,
+  };
+  return next;
+}
+
 export function removeThreadFromCustomFolders(
   folders: readonly SidebarCustomFolder[],
   threadKey: string,

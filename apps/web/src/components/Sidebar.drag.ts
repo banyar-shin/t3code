@@ -91,7 +91,47 @@ export function createSidebarCollisionDetection(
   };
 }
 
-export function createSidebarSortingStrategy(input: {
+function isCustomFolderDragItem(item: SidebarListItem): boolean {
+  return item.kind === "custom-folder" || item.kind === "custom-folder-thread";
+}
+
+export function createSidebarSortingStrategy(
+  input: Parameters<typeof createSectionSortingStrategy>[0],
+): SortingStrategy {
+  if (input.enabled === false) return () => stationary;
+  if (input.items.some(isCustomFolderDragItem)) return createFolderAwareSortingStrategy(input);
+  return createSectionSortingStrategy(input);
+}
+
+function createFolderAwareSortingStrategy(
+  input: Parameters<typeof createSectionSortingStrategy>[0],
+): SortingStrategy {
+  const sectionItems = input.items.filter((item) => !isCustomFolderDragItem(item));
+  const sectionStrategy = createSectionSortingStrategy({ ...input, items: sectionItems });
+  const sectionIndexByFullIndex: number[] = [];
+  let sectionIndex = 0;
+  for (const item of input.items) {
+    sectionIndexByFullIndex.push(isCustomFolderDragItem(item) ? -1 : sectionIndex++);
+  }
+  return (args) => {
+    const over = input.items[args.overIndex];
+    const active = input.items[args.activeIndex];
+    if (over === undefined || isCustomFolderDragItem(over) || active?.kind !== "thread") {
+      return stationary;
+    }
+    const index = sectionIndexByFullIndex[args.index] ?? -1;
+    const activeIndex = sectionIndexByFullIndex[args.activeIndex] ?? -1;
+    const overIndex = sectionIndexByFullIndex[args.overIndex] ?? -1;
+    if (index === -1 || activeIndex === -1 || overIndex === -1) return stationary;
+    const rects = [];
+    for (let cursor = 0; cursor < sectionIndexByFullIndex.length; cursor += 1) {
+      if (sectionIndexByFullIndex[cursor] !== -1) rects.push(args.rects[cursor]!);
+    }
+    return sectionStrategy({ ...args, rects, activeIndex, overIndex, index });
+  };
+}
+
+function createSectionSortingStrategy(input: {
   items: readonly SidebarListItem[];
   enabled?: boolean;
   settledOrder: readonly string[];
@@ -104,7 +144,6 @@ export function createSidebarSortingStrategy(input: {
   slimHeight?: number;
   boundaryLabelHeight?: number;
 }): SortingStrategy {
-  if (input.enabled === false) return () => stationary;
   const { items } = input;
   const indices = new Map(items.map((item, index) => [sidebarListItemId(item), index]));
   let previous: Pick<Layout, "rects" | "activeIndex" | "overIndex"> | undefined;
@@ -134,6 +173,7 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
+      if (item.kind !== "thread") continue;
       if (item.section === "pinned" || item.section === "active" || item.section === "working")
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;

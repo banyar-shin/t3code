@@ -9,7 +9,7 @@ import { memo, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode 
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
-import type { SidebarCustomFolder } from "../../sidebarCustomFolders";
+import { customFolderRowId, type SidebarCustomFolder } from "../../sidebarCustomFolders";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
 import {
@@ -42,9 +42,7 @@ export function sidebarFolderRowId(projectKey: string) {
 
 const CUSTOM_FOLDER_ROW_PREFIX = "custom-folder:";
 
-export function customFolderRowId(folderId: string) {
-  return `${CUSTOM_FOLDER_ROW_PREFIX}${folderId}`;
-}
+export { customFolderRowId };
 
 export function customFolderIdFromRowId(rowId: string): string | null {
   return rowId.startsWith(CUSTOM_FOLDER_ROW_PREFIX)
@@ -100,8 +98,9 @@ function FolderRenameInput(props: {
   );
 }
 
+const FOLDER_ROW_CLASS_NAME = "group/project-folder relative mt-2 list-none first:mt-0";
+
 function SidebarFolderHeader(props: {
-  testId: string;
   rowId: string;
   collapsed: boolean;
   label: string;
@@ -273,23 +272,24 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const gt = useGT();
   const { group, collapsed, hiddenThreads } = props;
   return (
-    <SidebarFolderHeader
-      testId="sidebar-project-folder"
-      rowId={sidebarFolderRowId(group.projectKey)}
-      collapsed={collapsed}
-      label={group.displayName}
-      icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
-      hiddenThreads={hiddenThreads}
-      onToggle={() => props.onToggle(group)}
-      onContextMenu={(position, source) => props.onContextMenu(group, position, source)}
-      newThreadLabel={gt("New thread in {project}", { project: group.displayName })}
-      newThreadPopup={
-        <T>
-          New thread in <Var>{group.displayName}</Var>
-        </T>
-      }
-      onNewThread={() => props.onNewThread(group)}
-    />
+    <li data-testid="sidebar-project-folder" className={FOLDER_ROW_CLASS_NAME}>
+      <SidebarFolderHeader
+        rowId={sidebarFolderRowId(group.projectKey)}
+        collapsed={collapsed}
+        label={group.displayName}
+        icon={<ProjectFavicon project={group} className="size-4 shrink-0" />}
+        hiddenThreads={hiddenThreads}
+        onToggle={() => props.onToggle(group)}
+        onContextMenu={(position, source) => props.onContextMenu(group, position, source)}
+        newThreadLabel={gt("New thread in {project}", { project: group.displayName })}
+        newThreadPopup={
+          <T>
+            New thread in <Var>{group.displayName}</Var>
+          </T>
+        }
+        onNewThread={() => props.onNewThread(group)}
+      />
+    </li>
   );
 });
 

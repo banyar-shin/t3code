@@ -24,8 +24,8 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
-  planSidebarThreadDrop,
   sidebarMarkerId,
+  planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
   sortScopedProjectsForSidebar,
@@ -1226,6 +1226,30 @@ describe("Working shelf (beta)", () => {
         pinnedOrder: [],
         activeOrder: ["a1", "a2", "p1"],
       });
+    });
+
+    it("drops a thread that sits outside the inbox into pinned, active, or settled", () => {
+      expect(resolveSidebarDropTarget(items, "filed", "p1")).toEqual({
+        section: "pinned",
+        pinnedOrder: ["p1", "filed"],
+        activeOrder: ["a1", "a2"],
+      });
+      expect(resolveSidebarDropTarget(items, "filed", sidebarMarkerId("pinned-header"))).toEqual({
+        section: "pinned",
+        pinnedOrder: ["filed", "p1"],
+        activeOrder: ["a1", "a2"],
+      });
+      expect(resolveSidebarDropTarget(items, "filed", "a1")).toEqual({
+        section: "active",
+        pinnedOrder: ["p1"],
+        activeOrder: ["a1", "filed", "a2"],
+      });
+      expect(resolveSidebarDropTarget(items, "filed", "s1")?.section).toBe("settled");
+      expect(
+        resolveSidebarDropTarget(items, "filed", sidebarMarkerId("settled-header"))?.section,
+      ).toBe("settled");
+      expect(resolveSidebarDropTarget(items, "filed", "w1")).toBeNull();
+      expect(resolveSidebarDropTarget(items, "filed", "missing")).toBeNull();
     });
 
     it.each([

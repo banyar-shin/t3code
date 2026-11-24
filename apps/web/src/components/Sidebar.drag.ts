@@ -30,6 +30,23 @@ export function restrictBelowSidebarLabel(
   return transform.y < minimumY ? { ...transform, y: minimumY } : transform;
 }
 
+/** How far a dragged row may travel up. Folders sit above Pins, so the clamp stops at Working or the first folder. */
+export function sidebarDragCeilingOffset(input: {
+  readonly listTop: number;
+  readonly scale: number;
+  readonly workingTop: number | null;
+  readonly folderTop: number | null;
+  readonly pinnedTop: number | null;
+  readonly labelHeight: number;
+}): number {
+  if (input.workingTop !== null) return input.workingTop - input.listTop;
+  if (input.folderTop !== null) return input.folderTop - input.listTop;
+  if (input.pinnedTop !== null) {
+    return input.pinnedTop - input.listTop + input.labelHeight * input.scale;
+  }
+  return 0;
+}
+
 export function createSidebarCollisionDetection(
   isValidTarget: (id: string) => boolean,
   options: {

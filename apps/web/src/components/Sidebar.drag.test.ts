@@ -5,6 +5,7 @@ import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
+  sidebarDragCeilingOffset,
 } from "./Sidebar.drag";
 import {
   resolveSidebarDropTarget,
@@ -751,6 +752,39 @@ describe("lifted card clearance", () => {
       },
       offset,
     );
+
+  it("lets a drag reach folders above the pinned label", () => {
+    expect(
+      sidebarDragCeilingOffset({
+        listTop: 100,
+        scale: 1,
+        workingTop: 140,
+        folderTop: 220,
+        pinnedTop: 400,
+        labelHeight: 16,
+      }),
+    ).toBe(40);
+    expect(
+      sidebarDragCeilingOffset({
+        listTop: 100,
+        scale: 1,
+        workingTop: null,
+        folderTop: 180,
+        pinnedTop: 400,
+        labelHeight: 16,
+      }),
+    ).toBe(80);
+    expect(
+      sidebarDragCeilingOffset({
+        listTop: 100,
+        scale: 2,
+        workingTop: null,
+        folderTop: null,
+        pinnedTop: 168,
+        labelHeight: 16,
+      }),
+    ).toBe(100);
+  });
 
   it.each([36, 82])("keeps a %ipx row below empty Pins even past the top edge", (height) => {
     for (const pointerY of [150, 136, 100, 0]) {

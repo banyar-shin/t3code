@@ -230,6 +230,7 @@ import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
+  sidebarDragCeilingOffset,
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
@@ -2055,12 +2056,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const list = threadListRef.current;
     const viewport = list?.closest('[data-slot="scroll-area-viewport"]');
     dragScrollRef.current = viewport ? { viewport, top: viewport.scrollTop } : null;
-    const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
-    if (list && header) {
+    if (list) {
       const listRect = list.getBoundingClientRect();
       const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
-      dragLabelOffsetRef.current =
-        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+      const topOf = (testId: string) =>
+        list.querySelector<HTMLElement>(`[data-testid="${testId}"]`)?.getBoundingClientRect().top ??
+        null;
+      dragLabelOffsetRef.current = sidebarDragCeilingOffset({
+        listTop: listRect.top,
+        scale,
+        workingTop: topOf("sidebar-working-header"),
+        folderTop: topOf("sidebar-custom-folder"),
+        pinnedTop: topOf("sidebar-pinned-header"),
+        labelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
+      });
     } else {
       dragLabelOffsetRef.current = 0;
     }
@@ -2195,10 +2204,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : { ...current, targetSection: target?.section ?? null },
     );
   };
+  const isWorkingShelfItem = (item: SidebarListItem) =>
+    (item.kind === "marker" && item.marker === "working-header") ||
+    (item.kind === "thread" && item.section === "working");
+  const workingShelfItems = sidebarListItems.filter(isWorkingShelfItem);
+  const inboxShelfItems = sidebarListItems.filter((item) => !isWorkingShelfItem(item));
   const sortableItems =
     customFolderViews.length === 0
       ? sidebarListItems
       : [
+          ...workingShelfItems,
           ...customFolderViews.flatMap((folder): SidebarListItem[] => [
             { kind: "custom-folder", folderId: folder.folder.id },
             ...folder.threads.map((thread): SidebarListItem => ({
@@ -2207,7 +2222,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               folderId: folder.folder.id,
             })),
           ]),
-          ...sidebarListItems,
+          ...inboxShelfItems,
         ];
   const sortableIds = sortableItems.map(sidebarListItemId);
   // Keep non-drag orders constant to preserve sorting strategy and row identity during streaming.
@@ -2328,7 +2343,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
     }
-    if (projectFolders !== null) return;
+    const homeBeforeSectionMove = customFolderThreadPlacement(
+      useUiStateStore.getState().customFolders,
+      activeKey,
+    );
+    // Project groups have no section drop. Leaving a folder still returns the thread to its group.
+    if (projectFolders !== null) {
+      if (homeBeforeSectionMove !== null && overId !== null && overId !== activeKey) {
+        useUiStateStore.getState().removeThreadFromCustomFolders(activeKey);
+      }
+      return;
+    }
     const activeSection = sectionForDrag(activeKey);
     const target =
       overId === null ? null : resolveSidebarDropTarget(sidebarListItems, activeKey, overId);
@@ -2370,8 +2395,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       )
     )
       return;
-    const home = customFolderThreadPlacement(useUiStateStore.getState().customFolders, activeKey);
-    if (home !== null) useUiStateStore.getState().removeThreadFromCustomFolders(activeKey);
+    if (homeBeforeSectionMove !== null) {
+      useUiStateStore.getState().removeThreadFromCustomFolders(activeKey);
+    }
     const drop = {
       key: activeKey,
       sourceSection: activeSection,
@@ -2480,14 +2506,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       } finally {
         if (
           !applied &&
-          home !== null &&
+          homeBeforeSectionMove !== null &&
           !useUiStateStore
             .getState()
             .customFolders.some((folder) => folder.threadKeys.includes(activeKey))
         ) {
           useUiStateStore
             .getState()
-            .placeThreadInCustomFolder(activeKey, home.folderId, home.beforeKey, false);
+            .placeThreadInCustomFolder(
+              activeKey,
+              homeBeforeSectionMove.folderId,
+              homeBeforeSectionMove.beforeKey,
+              false,
+            );
         }
       }
     })();
@@ -3817,8 +3848,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
                       ];
+                      const folderNodes: ReactNode[] = [];
                       if (customFolderViews.length > 0) {
-                        items.push(
+                        folderNodes.push(
                           <SortableContext
                             key="sidebar-custom-folders"
                             items={customFolderViews.flatMap((folder) => [
@@ -3859,16 +3891,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           </SortableContext>,
                         );
                       }
+                      const workingShelfNodes: ReactNode[] = [];
+                      const inboxNodes: ReactNode[] = [];
                       for (const item of sidebarListItems) {
+                        const shelfNodes = isWorkingShelfItem(item)
+                          ? workingShelfNodes
+                          : inboxNodes;
                         if (item.kind === "thread") {
                           // Folders draw active rows in their own place below.
                           if (projectFolders !== null && item.section === "active") continue;
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          shelfNodes.push(
+                            renderThreadRow(threadByKey.get(item.key)!, item.section),
+                          );
                           continue;
                         }
                         if (projectFolders !== null && item.marker === "active-placeholder") {
                           for (const folder of projectFolders) {
-                            items.push(
+                            shelfNodes.push(
                               <SidebarProjectFolderHeader
                                 key={`project-folder:${folder.group.projectKey}`}
                                 group={folder.group}
@@ -3880,7 +3919,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             for (const thread of folder.threads) {
-                              items.push(
+                              shelfNodes.push(
                                 renderThreadRow(
                                   thread,
                                   "active",
@@ -3893,7 +3932,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         }
                         switch (item.marker) {
                           case "pinned-header":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarDragBoundary
                                 key="pinned-header"
                                 marker="pinned-header"
@@ -3904,7 +3943,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "pinned-divider":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarDragBoundary
                                 key="pinned-divider"
                                 marker="pinned-divider"
@@ -3915,7 +3954,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "active-placeholder":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarSectionPlaceholder
                                 key="active-placeholder"
                                 marker="active-placeholder"
@@ -3933,7 +3972,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "working-header":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarSectionHeader
                                 key="working-shelf-header"
                                 marker="working-header"
@@ -3947,7 +3986,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "snoozed-header":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
@@ -3962,7 +4001,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "settled-header":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
@@ -3979,7 +4018,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             );
                             break;
                           case "settled-placeholder":
-                            items.push(
+                            shelfNodes.push(
                               <SidebarSectionPlaceholder
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
@@ -3998,6 +4037,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             break;
                         }
                       }
+                      items.push(...workingShelfNodes, ...folderNodes, ...inboxNodes);
                       return items;
                     })()}
                     {settledShelfExpanded && hiddenSettledCount > 0 ? (

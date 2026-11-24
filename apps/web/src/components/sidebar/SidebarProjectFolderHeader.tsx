@@ -169,7 +169,6 @@ function SidebarFolderHeader(props: {
   const drag = props.drag;
   return (
     <li
-      ref={drag?.setNodeRef}
       data-testid={props.testId}
       className={cn(
         "group/project-folder relative mt-2 list-none first:mt-0",
@@ -203,7 +202,7 @@ function SidebarFolderHeader(props: {
         </div>
       ) : (
         <button
-          ref={drag?.setActivatorNodeRef}
+          ref={drag?.setNodeRef}
           type="button"
           {...(drag?.listeners ?? {})}
           data-sidebar-row={props.rowId}
